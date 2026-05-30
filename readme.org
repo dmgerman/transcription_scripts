@@ -1,0 +1,79 @@
+#+title: Transcription
+#+author: dmg
+
+* Overview
+
+Transcribes audio recordings with speaker separation (diarization).
+Pipeline: WhisperX (transcription + word-level alignment) → pyannote (speaker diarization).
+
+Tested on two-speaker meeting recordings in Spanish.
+
+* Requirements
+
+- Python 3.13 (via =.venv=, set up automatically — see Setup)
+- FFmpeg (=brew install ffmpeg=)
+- GPG (for reading the HuggingFace token from =~/.authinfo.gpg=)
+- A HuggingFace account with access granted to three gated models (see below)
+
+* Setup
+
+#+begin_src bash
+cd ~/git.dmg/transcription
+
+# Create the virtualenv and install dependencies
+python3 -m venv .venv
+.venv/bin/pip install whisperx pyannote.audio
+#+end_src
+
+Accept the following HuggingFace model agreements (free account required):
+- https://huggingface.co/pyannote/speaker-diarization-3.1
+- https://huggingface.co/pyannote/segmentation-3.0
+- https://huggingface.co/pyannote/speaker-diarization-community-1
+
+Add your HuggingFace token to =~/.authinfo.gpg=:
+#+begin_src
+machine huggingface.co login <user> password <token>
+#+end_src
+
+* Usage
+
+#+begin_src bash
+# Transcribe a single file (output alongside input)
+~/git.dmg/transcription/transcribe.py recording.WAV
+
+# Transcribe to a specific output directory
+~/git.dmg/transcription/transcribe.py recording.WAV --output-dir /tmp
+
+# Transcribe multiple files
+~/git.dmg/transcription/transcribe.py *.WAV --output-dir ~/transcripts
+#+end_src
+
+Output is a =.md= file per audio file with speaker-labeled turns:
+
+#+begin_example
+**SPEAKER_00**: Entonces, vamos, ¿les puedo preguntar?
+
+**SPEAKER_01**: Sí, sí, estoy de acuerdo.
+#+end_example
+
+Files with an existing transcript are skipped automatically.
+
+* Options
+
+| Flag           | Default     | Description                     |
+|----------------+-------------+---------------------------------|
+| =--model=      | =large-v2=  | Whisper model size              |
+| =--device=     | =cpu=       | =cpu= or =cuda=                 |
+| =--output-dir= | (same dir)  | Where to write =.md= files      |
+
+* Notes
+
+- Model weights are cached in =~/.cache/huggingface/hub/= and =~/.cache/torch/hub/=
+  after the first run — subsequent runs are faster.
+- Diarization is CPU-bound and slow: ~5 min for a 73 MB file, ~20 min for 254 MB.
+  A machine with a GPU (=--device cuda=) would be significantly faster.
+- FFmpeg 8 triggers a harmless torchcodec warning at startup — ignore it.
+
+* Pending
+
+- [ ] Checkpoint saving between pipeline steps to avoid repeating work on re-runs
