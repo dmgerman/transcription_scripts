@@ -6,6 +6,10 @@
 Transcribes audio recordings with speaker separation (diarization).
 Pipeline: WhisperX (transcription + word-level alignment) → pyannote (speaker diarization).
 
+=transcribe.py= handles any audio file. Two scripts feed it: =dji_copy.sh= for
+the DJI field recorder, and =local_record.sh= for meetings happening on this
+computer (see [[*Recording meetings on this computer][Recording meetings on this computer]]).
+
 Handles any number of speakers: pyannote determines how many are present, so a
 solo voice memo and a group conversation both work without being told in
 advance. Use =--min-speakers= / =--max-speakers= only to constrain the guess.
@@ -115,4 +119,274 @@ Files with an existing transcript are skipped automatically.
   interrupted run resumes instead of repeating work. Checkpoint names do not
   encode the settings, so pass =--force= after changing =--model= or
   =--compute-type= to avoid reusing a stale checkpoint.
-- FFmpeg 8 triggers a harmless torchcodec warning at startup — ignore it.
+- A harmless torchcodec warning appears at startup: it looks for the FFmpeg 4–7
+  libraries and the installed FFmpeg is 9. Ignore it — audio is loaded via
+  soundfile/librosa instead.
+
+* Recording meetings on this computer
+
+=local_record.sh= records a meeting happening on this computer — Zoom, Teams, a
+browser call — and turns it into a speaker-labelled transcript.
+
+Zoom's own recording only helps the host, so this captures the meeting from
+your side instead. It records *two* tracks at once:
+
+- *remote* — everything the computer plays: every other participant, captured
+  through a virtual audio driver
+- *me* — your microphone: one known person
+
+Keeping them apart is the whole point. The remote track gets full diarization,
+so any number of other participants come out as =SPEAKER_00=, =SPEAKER_01= and
+so on; your own track needs no diarization at all, because there is only one
+person on it. The two are then merged by timestamp into one conversation.
+
+Recordings land in =~/temp/dji/local/=, which keeps them out of the way of
+=dji_copy.sh= and its =*.WAV= glob.
+
+** Additional requirements
+
+Beyond the [[*Setup][Setup]] above:
+
+- BlackHole 2ch, a virtual audio driver: =brew install blackhole-2ch=
+
+After installing BlackHole, *log out and back in* — the driver does not appear
+until the audio daemon restarts.
+
+** Why two audio devices are needed
+
+macOS will not let one application both play audio and hand that audio to
+another application. BlackHole is a driver that is an output and an input at
+the same time: anything played into it can be recorded out of it.
+
+That leaves two problems, and macOS solves them with two different device
+types, which sit next to each other in the same menu and do opposite things:
+
+| Device type           | Direction   | Purpose here                                       |
+|-----------------------+-------------+----------------------------------------------------|
+| *Multi-Output Device* | output only | Send meeting audio to your ears *and* to BlackHole |
+| *Aggregate Device*    | has inputs  | Record BlackHole and the microphone together       |
+
+Both are created in *Audio MIDI Setup* (=/Applications/Utilities/=), from the
+=+= button at the bottom left.
+
+*** The output device: multioutput.dmg
+
+This is what you listen through. Without it you would either hear the meeting
+or record it, not both.
+
+1. =+= → *Create Multi-Output Device*
+2. Tick your real output *first* — headphones, AirPods, speakers
+3. Tick *BlackHole 2ch*
+4. Tick *Drift Correction* on BlackHole, not on your real output
+5. Rename it =multioutput.dmg=
+
+The first device in the list is the clock master, so your real output must be
+at the top. Volume keys only affect the master, which is another reason.
+
+*** The input device: aggregate.dmg
+
+This is what actually gets recorded.
+
+1. =+= → *Create Aggregate Device*
+2. Tick *BlackHole 2ch* first
+3. Tick *MacBook Pro Microphone* second
+4. Tick *Drift Correction* on the microphone
+5. Rename it =aggregate.dmg=
+
+Order matters: it gives 3 input channels, with the remote audio on =c0= and
+=c1= and the microphone on =c2=, which is what the script expects.
+
+It must be *BlackHole 2ch*, not the 16-channel version. A microphone plus a
+16-channel BlackHole is 17 channels, and no capture path reads that reliably.
+
+*** System settings
+
+In *System Settings → Sound*:
+
+- *Output*: =multioutput.dmg=
+- *Input*: =MacBook Pro Microphone=
+
+Then set the meeting app's speaker to =multioutput.dmg= as well. In Zoom this
+is under Settings → Audio.
+
+Do *not* choose the AirPods microphone as the input. Bluetooth then switches to
+the headset profile, which is mono and narrowband in *both* directions — you
+would hear the meeting in degraded mono as well as recording yourself badly.
+Wear the AirPods, use the laptop microphone.
+
+** Checking the setup
+
+#+begin_src bash
+cd ~/git.dmg/transcription_scripts
+
+# Shows the aggregate device and its channel layout
+./local_record.sh devices
+
+# Records a few seconds and reports the level of each channel
+./local_record.sh probe
+#+end_src
+
+=devices= should report *3 input channels* with the microphone on =c2=.
+
+For =probe=, play something and talk at the same time. A healthy result looks
+like this:
+
+#+begin_example
+  c0  RMS=-27.047487  <-- SIGNAL
+  c1  RMS=-27.323364  <-- SIGNAL
+  c2  RMS=-50.264346  <-- SIGNAL
+#+end_example
+
+A channel reading =-inf= is receiving nothing at all. If that is =c0= and =c1=,
+the system output is not reaching BlackHole — check that =multioutput.dmg= is
+selected and that it contains BlackHole 2ch. If it is =c2=, the microphone is
+missing from the aggregate, or the terminal lacks microphone permission.
+
+The first time you run this, macOS asks for microphone permission. Grant it, or
+nothing will be recorded.
+
+** Usage
+
+#+begin_src bash
+cd ~/git.dmg/transcription_scripts
+
+# Record until Ctrl-C
+./local_record.sh
+
+# Record, adding a name to the filenames
+./local_record.sh standup
+
+# Record a fixed number of seconds
+./local_record.sh -s 600 standup
+
+# Transcribe the most recent recording
+./local_record.sh transcribe
+
+# Transcribe a specific one
+./local_record.sh transcribe local_20260922_191347
+#+end_src
+
+Stop a recording with *Ctrl-C*. Do not close the terminal or =kill -9= the
+script: that leaves FFmpeg holding the audio device, which truncates the files
+and blocks the next recording.
+
+Start recording a few seconds before the meeting begins — the aggregate device
+takes about a second to spin up.
+
+** Output
+
+Recording produces, in =~/temp/dji/local/=:
+
+| File                       | What it is                         |
+|----------------------------+------------------------------------|
+| =local_<stamp>_remote.WAV= | the other participants             |
+| =local_<stamp>_me.WAV=     | your microphone                    |
+| =local_<stamp>.mp3=        | both mixed together, for listening |
+
+where =<stamp>= is =YYYYMMDD_HHMMSS=, plus the name if you gave one.
+
+Transcribing adds:
+
+| File                      | What it is                              |
+|---------------------------+-----------------------------------------|
+| =local_<stamp>.md=        | *the transcript* — both tracks merged   |
+| =local_<stamp>_remote.md= | the remote track alone                  |
+| =local_<stamp>_me.md=     | your track alone                        |
+| =local_<stamp>-joint.md=  | the mixed MP3 transcribed as one stream |
+
+=local_<stamp>.md= is the one to read:
+
+#+begin_example
+[00:00:02] **SPEAKER_02**: against the Constitution.
+[00:00:04] **DMG**: No way, it is against the constitution.
+[00:00:07] **SPEAKER_01**: What kind of a sick country doesn't allow warrantless search?
+[00:00:18] **DMG**: Or the Russia these days.
+#+end_example
+
+Your own lines are labelled =DMG= rather than a =SPEAKER_nn=, because they came
+in on their own track and there is nothing to guess. Change it with
+=LOCAL_MY_LABEL=.
+
+=-joint.md= is a cross-check, not the main output. It transcribes the mixed
+audio as a single stream, so it has to work out who is speaking from one signal
+where your microphone bleed and the remote audio sit at similar levels. It is
+measurably worse at it: on a 2.5-minute sample the merged transcript resolved
+five speakers where the joint pass found two. Where it does help is overlapping
+speech, which the per-track version splits into separate lines.
+
+** Options
+
+Set these as environment variables.
+
+| Variable             | Default            | Description                       |
+|----------------------+--------------------+-----------------------------------|
+| =LOCAL_DEST=         | =~/temp/dji/local= | Where recordings are written      |
+| =LOCAL_DEVICE=       | =aggregate.dmg=    | Aggregate device to record        |
+| =LOCAL_MY_LABEL=     | =DMG=              | Label for your own track          |
+| =LOCAL_RATE=         | =16000=            | Output sample rate                |
+| =LOCAL_MP3_BITRATE=  | =128k=             | Bitrate of the mixed MP3          |
+| =LOCAL_MIC_CHANNEL=  | last channel       | Override the microphone channel   |
+| =LOCAL_REMOTE_LEFT=  | =c0=               | Override the remote left channel  |
+| =LOCAL_REMOTE_RIGHT= | =c1=               | Override the remote right channel |
+| =LOCAL_TRANSCRIBE=   | =transcribe.py= in this repo | Path to the transcription script |
+
+For example:
+
+#+begin_src bash
+LOCAL_DEVICE="other.dmg" LOCAL_MY_LABEL="DANIEL" ./local_record.sh
+#+end_src
+
+** Troubleshooting
+
+*** "no recordable device named aggregate.dmg"
+
+The aggregate device does not exist or has no inputs. A *Multi-Output* device
+named =aggregate.dmg= would give this too — it is output only. Create an
+*Aggregate Device* instead.
+
+*** The remote track is silent
+
+System audio is not reaching BlackHole. Check that =multioutput.dmg= is the
+selected output in System Settings, that it contains BlackHole 2ch, and that
+the meeting app's speaker is set to it as well.
+
+*** The me track is silent
+
+Either the microphone is not in the aggregate device (=./local_record.sh
+devices= should say 3 channels), or the terminal does not have microphone
+permission.
+
+*** "Cannot use Aggregate Device", or every channel is digital silence
+
+This is a permissions problem, despite how it reads. Grant your terminal
+application microphone access in *System Settings → Privacy & Security →
+Microphone*, then restart the terminal. Denied access produces silence rather
+than an error, which makes it look like a hardware fault.
+
+*** Every channel reports the same level
+
+The device has too many channels — usually because the aggregate still contains
+BlackHole 16ch. =./local_record.sh devices= will report more than 3 channels.
+Rebuild it with BlackHole 2ch.
+
+*** "Invalid PCM packet" when converting to MP3
+
+Harmless. The final audio frame is cut mid-write when the recording stops, and
+FFmpeg discards it. It costs a fraction of a second of trailing audio and
+happens on every Ctrl-C.
+
+** Notes
+
+- Both tracks come from *one* device, so they share a single clock and cannot
+  drift apart over the length of a meeting. That is what makes merging the two
+  transcripts a simple sort on the =[HH:MM:SS]= prefix. Two separate recorders
+  would need drift correction.
+- Recording is 16 kHz, which is what Whisper resamples to anyway. An hour is
+  around 100 MB per track rather than a gigabyte.
+- The WAV files are kept after the MP3 is made: the transcript is built from
+  them, and it is their separation that makes the speaker labelling work.
+- Capture is FFmpeg, not sox. sox's CoreAudio driver refuses three channels and
+  silently falls back to two, which misreads the interleaved stream and leaves
+  every channel carrying the same mixture.
+- Transcription is a separate step by design, so it does not hold up the end of
+  a meeting. It takes roughly 40 seconds per minute of audio.
