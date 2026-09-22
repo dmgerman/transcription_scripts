@@ -1,4 +1,4 @@
-#!/usr/bin/env /Users/dmg/git.dmg/transcription/.venv/bin/python3
+#!/usr/bin/env /Users/dmg/git.dmg/transcription_scripts/.venv/bin/python3
 """Transcribe audio files with speaker diarization using WhisperX + pyannote."""
 
 import argparse

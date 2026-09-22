@@ -270,7 +270,7 @@ fi
 
 # Transcribe any .WAV files missing a .md counterpart
 STAGE="transcribe"
-TRANSCRIBE="$HOME/git.dmg/transcription/transcribe.py"
+TRANSCRIBE="$HOME/git.dmg/transcription_scripts/transcribe.py"
 transcribed=0
 tr_failed=0
 if [[ ! -x "$TRANSCRIBE" ]]; then

@@ -18,11 +18,10 @@ Tested on two-speaker meeting recordings in Spanish.
 * Setup
 
 #+begin_src bash
-cd ~/git.dmg/transcription
+cd ~/git.dmg/transcription_scripts
 
-# Create the virtualenv and install dependencies
-python3 -m venv .venv
-.venv/bin/pip install whisperx pyannote.audio
+# Installs ffmpeg/gnupg, creates .venv, installs dependencies, checks the token
+./requirements.sh
 #+end_src
 
 Accept the following HuggingFace model agreements (free account required):
@@ -39,13 +38,13 @@ machine huggingface.co login <user> password <token>
 
 #+begin_src bash
 # Transcribe a single file (output alongside input)
-~/git.dmg/transcription/transcribe.py recording.WAV
+~/git.dmg/transcription_scripts/transcribe.py recording.WAV
 
 # Transcribe to a specific output directory
-~/git.dmg/transcription/transcribe.py recording.WAV --output-dir /tmp
+~/git.dmg/transcription_scripts/transcribe.py recording.WAV --output-dir /tmp
 
 # Transcribe multiple files
-~/git.dmg/transcription/transcribe.py *.WAV --output-dir ~/transcripts
+~/git.dmg/transcription_scripts/transcribe.py *.WAV --output-dir ~/transcripts
 #+end_src
 
 Output is a =.md= file per audio file with speaker-labeled turns:
