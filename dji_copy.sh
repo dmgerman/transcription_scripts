@@ -271,15 +271,37 @@ fi
 # Transcribe any .WAV files missing a .md counterpart
 STAGE="transcribe"
 TRANSCRIBE="$HOME/git.dmg/transcription_scripts/transcribe.py"
+
+# Language is auto-detected per file: recordings may be English, Spanish or
+# Japanese. Detection costs a few seconds and is unreliable on silence, but the
+# duration gate below keeps silent artifacts out of the pipeline entirely.
+# Diarization stays on: some sessions have several speakers, and a missed
+# speaker cannot be recovered from the transcript afterwards. transcribe.py has
+# a --no-diarize flag for manual one-off runs, but it does not belong here.
+TRANSCRIBE_ARGS=()
+
+# A recording shorter than this is a mic-on artifact, not a session. Running the
+# full pipeline on one wastes minutes and yields hallucinated text, because
+# Whisper invents confident boilerplate when fed silence.
+MIN_TRANSCRIBE_SECONDS=30
+
 transcribed=0
 tr_failed=0
+tr_skipped=0
 if [[ ! -x "$TRANSCRIBE" ]]; then
   warn "$TRANSCRIBE not executable; skipping transcription"
 else
   for wav in "$DEST"/*.WAV; do
     md="${wav%.WAV}.md"
     if [[ ! -f "$md" ]]; then
-      if "$TRANSCRIBE" "$wav" --output-dir "$DEST"; then
+      dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$wav" | awk '{printf "%.0f", $1}')
+      if [[ -n "$dur" ]] && (( dur < MIN_TRANSCRIBE_SECONDS )); then
+        echo "STAGE transcribe: skipping $(basename "$wav") (${dur}s < ${MIN_TRANSCRIBE_SECONDS}s)"
+        (( tr_skipped++ )) || true
+        continue
+      fi
+      # ${a[@]+"${a[@]}"} as elsewhere: bash 3.2 treats the empty array as unset under set -u.
+      if "$TRANSCRIBE" "$wav" ${TRANSCRIBE_ARGS[@]+"${TRANSCRIBE_ARGS[@]}"} --output-dir "$DEST"; then
         (( transcribed++ )) || true
       else
         note "transcription failed: $(basename "$wav")"
