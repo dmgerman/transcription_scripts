@@ -26,7 +26,7 @@ def get_hf_token() -> str:
     raise RuntimeError("HuggingFace token not found in ~/.authinfo.gpg")
 
 
-def transcribe(audio_path: Path, hf_token: str, model: str, device: str, min_speakers: int | None, max_speakers: int | None, checkpoint_dir: Path, force: bool = False, compute_type: str = "int8", threads: int = 4, language: str | None = None, batch_size: int = 8, diarize: bool = True, diarize_device: str | None = None) -> str:
+def transcribe(audio_path: Path, hf_token: str, model: str, device: str, min_speakers: int | None, max_speakers: int | None, checkpoint_dir: Path, force: bool = False, compute_type: str = "int8", threads: int = 4, language: str | None = None, batch_size: int = 8, diarize: bool = True, diarize_device: str | None = None, timestamps: bool = False, label: str = "SPEAKER") -> str:
     import whisperx
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +66,7 @@ def transcribe(audio_path: Path, hf_token: str, model: str, device: str, min_spe
     # single-speaker recordings.
     if not diarize:
         print("Skipping speaker diarization (--no-diarize)")
-        return format_transcript(result["segments"], with_speakers=False)
+        return format_transcript(result["segments"], with_speakers=False, timestamps=timestamps, label=label)
 
     # pyannote runs in plain torch, so unlike the ctranslate2 ASR stage it can
     # use the Apple GPU: measured 9.5s on mps against 37.8s on cpu for one
@@ -97,10 +97,27 @@ def transcribe(audio_path: Path, hf_token: str, model: str, device: str, min_spe
 
     result = whisperx.assign_word_speakers(diarize_segments, result)
 
-    return format_transcript(result["segments"])
+    return format_transcript(result["segments"], timestamps=timestamps, label=label)
 
 
-def format_transcript(segments: list, with_speakers: bool = True) -> str:
+def format_timestamp(seconds: float) -> str:
+    total = int(seconds)
+    return f"{total // 3600:02d}:{total % 3600 // 60:02d}:{total % 60:02d}"
+
+
+def format_transcript(segments: list, with_speakers: bool = True, timestamps: bool = False, label: str = "SPEAKER") -> str:
+    if timestamps:
+        # One line per segment rather than per speaker run, so transcripts of
+        # two tracks recorded together can be interleaved by sorting on time.
+        lines = []
+        for seg in segments:
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+            who = seg.get("speaker", label) if with_speakers else label
+            lines.append(f"[{format_timestamp(seg.get('start', 0))}] **{who}**: {text}")
+        return "\n".join(lines) + "\n" if lines else ""
+
     if not with_speakers:
         text = " ".join(
             seg.get("text", "").strip() for seg in segments if seg.get("text", "").strip()
@@ -149,6 +166,11 @@ def main():
     parser.add_argument("--diarize-device",
                         help="Device for diarization (default: mps when available, else --device). "
                              "pyannote is ~4x faster on the Apple GPU; falls back to cpu on failure")
+    parser.add_argument("--timestamps", action="store_true",
+                        help="Prefix each segment with [HH:MM:SS]. One line per segment, so "
+                             "transcripts of two tracks recorded together can be merged by time")
+    parser.add_argument("--label", default="SPEAKER",
+                        help="Speaker label to use when diarization is off (default: SPEAKER)")
     parser.add_argument("--output-dir", type=Path, help="Output directory (default: same as input)")
     parser.add_argument("--min-speakers", type=int, help="Minimum number of speakers (default: auto)")
     parser.add_argument("--max-speakers", type=int, help="Maximum number of speakers (default: auto)")
@@ -186,7 +208,8 @@ def main():
             transcript = transcribe(audio_path, hf_token, args.model, args.device, args.min_speakers, args.max_speakers, args.checkpoint_dir, args.force,
                                     compute_type=args.compute_type, threads=args.threads,
                                     language=args.language, batch_size=args.batch_size,
-                                    diarize=not args.no_diarize, diarize_device=args.diarize_device)
+                                    diarize=not args.no_diarize, diarize_device=args.diarize_device,
+                                    timestamps=args.timestamps, label=args.label)
             out_path.write_text(transcript)
             print(f"Saved: {out_path}")
         except Exception as e:

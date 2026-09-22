@@ -1,0 +1,8 @@
+# Byte-compiled Python from importing transcribe.py
+__pycache__/
+
+# Per-machine Claude Code permissions, not shared settings
+.claude/
+
+# The venv is rebuilt by requirements.sh; it also writes its own .gitignore
+.venv/
